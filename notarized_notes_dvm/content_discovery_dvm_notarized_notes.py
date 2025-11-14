@@ -36,6 +36,7 @@ class NotarizedNotesDVM(AIONostrDVM):
         self.taskgroup.create_task(self.query_notarization_events())
         self.taskgroup.create_task(self.keep_db_up_to_date())
         self.taskgroup.create_task(self.save_verified_proofs())
+        self.taskgroup.create_task(self._broadcast_profile_event())
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
@@ -142,6 +143,29 @@ class NotarizedNotesDVM(AIONostrDVM):
             content=content,
         )
         return info
+
+    async def _broadcast_profile_event(self):
+        profile_info = {
+            'name': self.dvm_name,
+            'about': 'Spam-free global feed of notarized notes. github.com/spesmilo/notary',
+            'picture': 'https://image.nostr.build/2f6eb8e1f7175dc9c14fdb6e3b101c2b33a10f8a25db828a686599e35eb4192b.png',
+            'display_name': self.dvm_name,
+            'website': 'https://github.com/spesmilo/notary/',
+            'lud16': 'x@lnaddress.com',
+        }
+        profile_event = NostrEvent(
+            kind=0,
+            content=json.dumps(profile_info),
+            tags=[],
+            expiration_ts=now() + 1209600,  # 2 weeks
+            pubkey=self.pubkey,
+        )
+        profile_event.sign(self._private_key.hex())
+        try:
+            await self._relay_manager.add_event(profile_event)
+            self.logger.debug(f"broadcasted kind 0 profile")
+        except Exception:
+            self.logger.error(f"failed to broadcast kind 0 profile")
 
     def load_db(self) -> dict:
         if not self.db_path.exists():
