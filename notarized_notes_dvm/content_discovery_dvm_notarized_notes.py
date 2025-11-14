@@ -137,7 +137,14 @@ class NotarizedNotesDVM(AIONostrDVM):
             "supportsEncryption": False,
             "acceptsNutZaps": False,
             "personalized": False,
-            "amount": 0,
+            "amount": "free",  # 'free' value seems weird but other dvms do it too...
+            "nip90Params": {
+                "max_results": {
+                    "required": False,
+                    "values": [],
+                    "description": "This is ignored and just here so clients handle this properly?",
+                },
+            },
         }
         info = NIP89Info(
             content=content,
