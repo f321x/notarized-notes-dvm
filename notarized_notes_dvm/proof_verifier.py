@@ -236,7 +236,7 @@ class NotarizationProofVerifier:
         # this doesn't have to be very fast as it happens concurrently to the requests, so
         # we rather add some generous sleeps to not abuse the electrum server too much
         while True:
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(10)
 
             notarization = await self.unverified_proofs.get()
 
