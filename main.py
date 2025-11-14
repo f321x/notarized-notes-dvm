@@ -34,6 +34,9 @@ async def main():
     log_level: str = env.get('LOG_LEVEL', 'INFO')
     set_up_logger(log_level)
     logger = logging.getLogger('dvm-application')
+    logger.info(
+        f"ENV:\n{relays=}\n{db_path=}\n{electrum_server=}\n{log_level=}"
+    )
 
     shutdown_event = asyncio.Event()
     loop = asyncio.get_running_loop()
