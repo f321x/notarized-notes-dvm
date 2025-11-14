@@ -2,9 +2,10 @@ import asyncio
 import logging
 from asyncio.queues import QueueFull
 from decimal import Decimal
-from typing import Optional, Callable, AsyncGenerator
+from typing import Optional, AsyncGenerator
 from dataclasses import dataclass
 
+# todo: replace connectrum with electrum library as it is now pulled in anyways
 from connectrum.client import StratumClient as ElectrumServerClient
 from connectrum.svr_info import ServerInfo as ElectrumServerInfo
 from connectrum import ElectrumErrorResponse
@@ -12,7 +13,7 @@ from cachetools import LRUCache
 from electrum_aionostr.event import Event as NostrEvent
 from electrum.bitcoin import construct_script, redeem_script_to_address, address_to_script, opcodes
 
-from .util import now, is_hex_str, leaf_hash, node_hash, int_to_bytes, verify_signature, bytes_to_int
+from .util import now, is_hex_str, leaf_hash, node_hash, verify_signature
 
 
 class UnconfirmedTx(Exception): pass
