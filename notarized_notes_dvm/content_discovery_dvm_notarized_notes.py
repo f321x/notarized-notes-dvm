@@ -120,7 +120,13 @@ class NotarizedNotesDVM(AIONostrDVM):
             content=json.dumps(event_ids),
             pubkey=self.pubkey,
             tags=tags,
-            expiration_ts=now() + 3600,
+            expiration_ts=now() + 15552000,
+            # ~180d expiry, clients seem to break if the response to a request they sent is
+            # not available anymore, and won't request a new one, rendering the dvm broken in this client
+            # instance, so the expiry has to be far so the client is hopefully smart enough to just request
+            # a new dvm task instead of waiting for a response to a request they sent 180days ago...
+            # this seems dumb as a custom feed is very short-lived, and they should request a new feed every
+            # time the user opens the custom feed anyway.
         )
         self.logger.debug(f"sending response to request {request.id}")
         return response
