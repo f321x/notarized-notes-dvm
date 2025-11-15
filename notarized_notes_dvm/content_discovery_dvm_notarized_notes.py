@@ -151,7 +151,7 @@ class NotarizedNotesDVM(AIONostrDVM):
         )
         return info
 
-    async def _broadcast_profile_event(self):
+    async def get_kind0_profile_event(self) -> NostrEvent:
         profile_info = {
             'name': self.dvm_name,
             'about': 'Spam-free global feed of notarized notes. github.com/spesmilo/notary',
@@ -167,12 +167,7 @@ class NotarizedNotesDVM(AIONostrDVM):
             expiration_ts=now() + 1209600,  # 2 weeks
             pubkey=self.pubkey,
         )
-        profile_event.sign(self._private_key.hex())
-        try:
-            await self._relay_manager.add_event(profile_event)
-            self.logger.debug(f"broadcasted kind 0 profile")
-        except Exception:
-            self.logger.error(f"failed to broadcast kind 0 profile")
+        return profile_event
 
     def load_db(self) -> dict:
         if not self.db_path.exists():
