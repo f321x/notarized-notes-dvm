@@ -13,4 +13,4 @@ CMD ["python", "main.py"]
 # build with:
 # docker build -t notarized-notes-dvm .
 # run with:
-# docker run --restart unless-stopped --env-file .env notarized-notes-dvm
+# docker run --network host --restart unless-stopped --env-file .env notarized-notes-dvm

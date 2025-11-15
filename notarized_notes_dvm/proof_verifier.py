@@ -4,21 +4,34 @@ from asyncio.queues import QueueFull
 from decimal import Decimal
 from typing import Optional, AsyncGenerator
 from dataclasses import dataclass
+from os import environ as env
 
-# todo: replace connectrum with electrum library as it is now pulled in anyways
-from connectrum.client import StratumClient as ElectrumServerClient
-from connectrum.svr_info import ServerInfo as ElectrumServerInfo
-from connectrum import ElectrumErrorResponse
 from cachetools import LRUCache
 from electrum_aionostr.event import Event as NostrEvent
 from electrum.bitcoin import construct_script, redeem_script_to_address, address_to_script, opcodes
+from bitcoinrpc import BitcoinRPC, RPCError as BitcoinDaemonRPCError
 
 from .util import now, is_hex_str, leaf_hash, node_hash, verify_signature
 
 
 class UnconfirmedTx(Exception): pass
 class InvalidProof(Exception): pass
-class MalformedElectrumServerResponseError(Exception): pass
+class MalformedBitcoinDaemonResponseError(Exception): pass
+
+
+@dataclass
+class BitcoinDaemonConfig:
+    address: str
+    user: str
+    password: str
+
+    @classmethod
+    def from_env(cls) -> 'BitcoinDaemonConfig':
+        return BitcoinDaemonConfig(
+            address=env['BITCOIN_DAEMON_RPC_ADDRESS'],
+            user=env['BITCOIN_DAEMON_RPC_USER'],
+            password=env['BITCOIN_DAEMON_RPC_PASSWORD'],
+        )
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -154,75 +167,22 @@ class UnverifiedNotarization:
 class NotarizationProofVerifier:
     PROOF_VERSION = 0
     MAX_PROOF_VERIFICATION_ATTEMPTS = 10
-    TRANSACTION_REQUEST_DELAY_SEC = 30  # how often we request the same txid from the electrum server
+    TRANSACTION_REQUEST_DELAY_SEC = 30  # how often we request the same txid from the bitcoin daemon
     OP_RETURN_MAGIC_BYTES = bytes.fromhex('0021')
 
-    def __init__(self, electrum_server: str):
+    def __init__(self, bitcoin_daemon_conf: BitcoinDaemonConfig):
         self.logger = logging.getLogger('proof-verifier')
-        electrum_server: list[str] = electrum_server.split(':')
-        assert len(electrum_server) == 3, "provide ELECTRUM_SERVER as host:port:protocol"
-        assert electrum_server[2] in ('s', 't'), f"provide electrum server with s or t protocol"
-        self.electrum_server_info: ElectrumServerInfo = ElectrumServerInfo(
-            hostname=electrum_server[0],
-            ports=[electrum_server[2], electrum_server[1]],
-            nickname_or_dict='verifier',
-        )
-        self.electrum_server = None  # type: Optional[ElectrumServerClient]
+        self.bitcoin_daemon_config = bitcoin_daemon_conf
         self.unverified_proofs = asyncio.Queue(maxsize=20_000)  # type: asyncio.Queue[UnverifiedNotarization]
         self.verified_proofs = asyncio.Queue(maxsize=20_000)  # type: asyncio.Queue[(bool, str, Proof)]  # valid, notarization event id, Proof
         # we can get multiple proofs to verify contained in the same tx, this cache allows to request
         # each txid only once instead of fetching the same tx multiple times for different proofs we want to verify
         self.requested_txids = LRUCache(maxsize=1000)  # type: LRUCache[str, tuple[int, dict]]  # txid -> tuple[last update ts, server resp]
-        self.connected = asyncio.Event()
 
     async def run(self):
-        try:
-            await self.connect_to_electrum_server()
-            await self.verify_proofs()
-        finally:
-            self.stop()
-            await asyncio.sleep(0.1)
-
-    def stop(self):
-        if self.electrum_server:
-            server_to_close = self.electrum_server
-            # set server none so the disconnect cb doesn't try to reconnect
-            self.electrum_server = None
-            self.connected.clear()
-            server_to_close.close()
-
-    async def connect_to_electrum_server(self):
-        self.electrum_server = ElectrumServerClient()
-        try:
-            await self.electrum_server.connect(
-                self.electrum_server_info,
-                proto_code=self.electrum_server_info['ports'][0],
-                use_tor=False,
-                disable_cert_verify=True,
-                proxy=None,
-                short_term=False,
-                disconnect_callback=self.electrum_server_disconnected_cb,
-            )
-        except Exception:
-            self.electrum_server = None
-            raise
-        self.connected.set()
-
-    def electrum_server_disconnected_cb(self, _client: ElectrumServerClient):
-        self.electrum_server = None
-        self.connected.clear()
-        self.logger.exception(f"Electrum server disconnected")
-        async def try_reconnect():
-            self.logger.info(f"reconnecting to electrum server")
-            try:
-                await asyncio.wait_for(self.connect_to_electrum_server(), timeout=60)
-                self.logger.info(f"reconnected to electrum server")
-            except Exception:
-                await asyncio.sleep(60)
-            return
-        # only try to reconnect if server is not None, we set server None on stop()/shutdown
-        if self.electrum_server is not None:
-            asyncio.run_coroutine_threadsafe(try_reconnect(), asyncio.get_running_loop())
+        # test fetching random tx from core daemon so it crashes right away if something is misconfigured
+        await self.fetch_tx_from_server('ab463b7f13feb74ec84133a4ace301e527196bc23d1e158ad9a97bbae5db56c0')
+        await self.verify_proofs()
 
     async def verify(self, unverified_notarization: UnverifiedNotarization):
         await self.unverified_proofs.put(unverified_notarization)
@@ -233,10 +193,8 @@ class NotarizationProofVerifier:
             yield verified_proof
 
     async def verify_proofs(self) -> None:
-        # this doesn't have to be very fast as it happens concurrently to the requests, so
-        # we rather add some generous sleeps to not abuse the electrum server too much
         while True:
-            await asyncio.sleep(10)
+            await asyncio.sleep(1)
 
             notarization = await self.unverified_proofs.get()
 
@@ -249,7 +207,6 @@ class NotarizationProofVerifier:
                 maybe_put_on_queue(notarization, self.unverified_proofs)
                 continue
 
-            await self.connected.wait()
             try:
                 await self.verify_proof(notarization.proof)
             except UnconfirmedTx:
@@ -261,9 +218,9 @@ class NotarizationProofVerifier:
                 notarization.reset_attempts()
                 maybe_put_on_queue(notarization, self.unverified_proofs)
                 continue
-            except (ElectrumErrorResponse, MalformedElectrumServerResponseError) as e:
+            except (MalformedBitcoinDaemonResponseError, BitcoinDaemonRPCError) as e:
                 # maybe not in servers mempool yet, or other network (e.g. testnet notarization)
-                self.logger.warning(f"electrum server error: {e}", exc_info=isinstance(e, MalformedElectrumServerResponseError))
+                self.logger.warning(f"bitcoin daemon error: {e}", exc_info=False)
                 notarization.verify_in(notarization.verification_attempts * 30)
                 notarization.bump_attempts()
                 maybe_put_on_queue(notarization, self.unverified_proofs)
@@ -285,7 +242,7 @@ class NotarizationProofVerifier:
             assert is_hex_str(tx), tx
             vout: list[dict] = tx_info['vout']
         except Exception as e:
-            raise MalformedElectrumServerResponseError("invalid electrum server response") from e
+            raise MalformedBitcoinDaemonResponseError("invalid bitcoin daemon response") from e
         if confs < 1:
             raise UnconfirmedTx()
 
@@ -315,17 +272,17 @@ class NotarizationProofVerifier:
                 tx_info = None  # request again, outdated
 
         if tx_info is None:  # no cached info
-            assert self.connected.is_set()
-            tx_info = await self.electrum_server.RPC(  # type: ignore
-                'blockchain.transaction.get',
-                txid,
-                True,
-            )
+            auth = (self.bitcoin_daemon_config.user, self.bitcoin_daemon_config.password)
+            async with BitcoinRPC.from_config(
+                    url=self.bitcoin_daemon_config.address,
+                    auth=auth,
+            ) as rpc:
+                tx_info = await rpc.getrawtransaction(txid, verbose=True, timeout=10)
         self.requested_txids[txid] = (now(), tx_info)  # cache the request
         return tx_info
 
     def parse_tx_outputs(self, txouts: list[dict]):
-        """txouts is 'vout' of getrawtransaction core rpc returned from electrum server"""
+        """txouts is 'vout' of getrawtransaction core rpc"""
         for output in txouts:
             spk = bytes.fromhex(output['scriptPubKey']['hex'])
             if spk.startswith(bytes.fromhex('6a')):  # OP_RETURN

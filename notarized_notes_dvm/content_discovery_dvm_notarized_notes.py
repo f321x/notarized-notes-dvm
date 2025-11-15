@@ -8,13 +8,14 @@ from electrum_aionostr.event import Event as NostrEvent
 from aionostr_dvm import AIONostrDVM, NIP89Info
 
 from .util import now
-from .proof_verifier import Proof, UnverifiedNotarization, NotarizationProofVerifier
+from .proof_verifier import (Proof, UnverifiedNotarization, NotarizationProofVerifier,
+                             BitcoinDaemonConfig)
 
 
 class NotarizedNotesDVM(AIONostrDVM):
     NOTARIZATION_EVENT_KIND = 30021
 
-    def __init__(self, relays: Sequence[str], private_key_hex: str, db_path: Path, electrum_server: str):
+    def __init__(self, relays: Sequence[str], private_key_hex: str, db_path: Path, bitcoin_daemon_conf: BitcoinDaemonConfig):
         AIONostrDVM.__init__(
             self,
             dvm_name='Notarized Notes',
@@ -22,7 +23,7 @@ class NotarizedNotesDVM(AIONostrDVM):
             private_key_hex=private_key_hex,
             service_event_kind=5300,  # content discovery event kind
         )
-        self.proof_verifier = NotarizationProofVerifier(electrum_server)
+        self.proof_verifier = NotarizationProofVerifier(bitcoin_daemon_conf)
         self.db_path = db_path if str(db_path).endswith('.json') else Path(str(db_path) + ".json")
         self.db: dict = defaultdict(dict, self.load_db())
         # event ids of proof events we already verified
