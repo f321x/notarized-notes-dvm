@@ -36,7 +36,6 @@ class NotarizedNotesDVM(AIONostrDVM):
         self.taskgroup.create_task(self.query_notarization_events())
         self.taskgroup.create_task(self.keep_db_up_to_date())
         self.taskgroup.create_task(self.save_verified_proofs())
-        self.taskgroup.create_task(self._broadcast_profile_event())
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
