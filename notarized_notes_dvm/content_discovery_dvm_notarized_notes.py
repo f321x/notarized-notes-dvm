@@ -169,7 +169,7 @@ class NotarizedNotesDVM(AIONostrDVM):
             kind=0,
             content=json.dumps(profile_info),
             tags=[],
-            expiration_ts=now() + 1209600,  # 2 weeks
+            expiration_ts=now() + 31_536_000,  # 1y
             pubkey=self.pubkey,
         )
         return profile_event
