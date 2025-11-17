@@ -1,0 +1,3 @@
+[submodule "notarized_notes_dvm/notary"]
+	path = notarized_notes_dvm/notary
+	url = https://github.com/spesmilo/notary

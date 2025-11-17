@@ -9,10 +9,10 @@ from os import environ as env
 
 from cachetools import LRUCache
 from electrum_aionostr.event import Event as NostrEvent
-from electrum.bitcoin import construct_script, redeem_script_to_address, address_to_script, opcodes
 from bitcoinrpc import BitcoinRPC, RPCError as BitcoinDaemonRPCError
 
-from .util import now, is_hex_str, leaf_hash, node_hash, verify_signature
+from .util import now, is_hex_str, verify_signature
+from .notary.plugin.notary import make_output_script, leaf_hash, node_hash
 
 
 class UnconfirmedTx(Exception): pass
@@ -325,10 +325,3 @@ def maybe_put_on_queue(element, queue: asyncio.Queue) -> None:
         queue.put_nowait(element)
     except QueueFull:
         pass
-
-
-def make_output_script(csv_delay: int) -> tuple[bytes, bytes]:
-    redeem_script = construct_script([csv_delay, opcodes.OP_CHECKSEQUENCEVERIFY, opcodes.OP_DROP, opcodes.OP_TRUE])
-    address = redeem_script_to_address('p2wsh', redeem_script)
-    scriptpubkey = address_to_script(address)
-    return redeem_script, scriptpubkey
