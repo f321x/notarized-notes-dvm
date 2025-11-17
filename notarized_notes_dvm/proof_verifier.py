@@ -1,6 +1,7 @@
 import asyncio
 import logging
 from asyncio.queues import QueueFull
+from collections import defaultdict
 from decimal import Decimal
 from typing import Optional, AsyncGenerator
 from dataclasses import dataclass
@@ -178,6 +179,8 @@ class NotarizationProofVerifier:
         # we can get multiple proofs to verify contained in the same tx, this cache allows to request
         # each txid only once instead of fetching the same tx multiple times for different proofs we want to verify
         self.requested_txids = LRUCache(maxsize=1000)  # type: LRUCache[str, tuple[int, dict]]  # txid -> tuple[last update ts, server resp]
+        # unconfirmed proofs that are still in the mempool
+        self._mempool_proofs = {}  # type: dict[str, UnverifiedNotarization]  # k: notarization-event-id
 
     async def run(self):
         # test fetching random tx from core daemon so it crashes right away if something is misconfigured
@@ -200,6 +203,7 @@ class NotarizationProofVerifier:
 
             if notarization.verification_attempts > self.MAX_PROOF_VERIFICATION_ATTEMPTS:
                 # we couldn't verify this proof, so it gets blacklisted
+                self._mempool_proofs.pop(notarization.notarization_event.id, None)
                 self.verified_proofs.put_nowait((False, notarization.notarization_event.id, notarization.proof))
                 continue
             if not notarization.verify_now():
@@ -217,6 +221,7 @@ class NotarizationProofVerifier:
                 # reset, maybe we increased the counter because it wasn't in our mempool before
                 notarization.reset_attempts()
                 maybe_put_on_queue(notarization, self.unverified_proofs)
+                self._mempool_proofs[notarization.notarization_event.id] = notarization
                 continue
             except (MalformedBitcoinDaemonResponseError, BitcoinDaemonRPCError) as e:
                 # maybe not in servers mempool yet, or other network (e.g. testnet notarization)
@@ -227,10 +232,12 @@ class NotarizationProofVerifier:
                 continue
             except (InvalidProof, Exception):  # definitely invalid, no need to retry
                 self.logger.debug(f"proof verification failed: {notarization.notarization_event.id=}", exc_info=True)
+                self._mempool_proofs.pop(notarization.notarization_event.id, None)
                 self.verified_proofs.put_nowait((False, notarization.notarization_event.id, notarization.proof))
                 continue
 
             # proof tx is valid and confirmed
+            self._mempool_proofs.pop(notarization.notarization_event.id, None)
             self.logger.debug(f"verified proof: {notarization.notarization_event.id=}")
             self.verified_proofs.put_nowait((True, notarization.notarization_event.id, notarization.proof))
 
@@ -243,8 +250,6 @@ class NotarizationProofVerifier:
             vout: list[dict] = tx_info['vout']
         except Exception as e:
             raise MalformedBitcoinDaemonResponseError("invalid bitcoin daemon response") from e
-        if confs < 1:
-            raise UnconfirmedTx()
 
         # 1. verify that the hash of the leaf is in the root of the tree
         event_id = bytes.fromhex(proof.notarized_event_id)
@@ -263,6 +268,8 @@ class NotarizationProofVerifier:
         # 4. verify that the amount burnt by the tx equals the sum of tree roots
         if txo_value != root_v:
             raise InvalidProof('value mismatch')
+        if confs < 1:
+            raise UnconfirmedTx()
 
     async def fetch_tx_from_server(self, txid: str) -> dict:
         tx_info = None
@@ -303,6 +310,13 @@ class NotarizationProofVerifier:
             raise Exception('burn output not found')
         txo_value = int(Decimal(txo['value']) * 100_000_000)
         return root_hash, csv_delay, txo_value, i, redeem_script
+
+    def get_mempool_proofs(self) -> dict[str, int]:  # notarized event id, amount
+        mempool_proofs = defaultdict(int)
+        for _, unconfirmed_notarization in self._mempool_proofs:
+            amount = unconfirmed_notarization.proof.proof_leaf_value_msat // 1000
+            mempool_proofs[unconfirmed_notarization.proof.notarized_event_id] += amount
+        return mempool_proofs
 
 
 def maybe_put_on_queue(element, queue: asyncio.Queue) -> None:

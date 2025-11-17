@@ -6,6 +6,7 @@ from typing import Sequence, Optional
 
 from electrum_aionostr.event import Event as NostrEvent
 from aionostr_dvm import AIONostrDVM, NIP89Info
+from cachetools import cached, TTLCache
 
 from .util import now
 from .proof_verifier import (Proof, UnverifiedNotarization, NotarizationProofVerifier,
@@ -94,6 +95,7 @@ class NotarizedNotesDVM(AIONostrDVM):
         self.logger.debug(f"saving verified proof, {event_summary=}")
         self.verified_proofs[proof.notarized_event_id] = event_summary
 
+    @cached(cache=TTLCache(maxsize=1, ttl=60))
     def get_sorted_notarized_event_ids(self) -> list[str]:
         current_time = now()
         decay_half_life = 30 * 24 * 3600  # 30 days in seconds
@@ -106,7 +108,13 @@ class NotarizedNotesDVM(AIONostrDVM):
             scored_events.append((event_id, score))
 
         scored_events.sort(key=lambda x: x[1], reverse=True)
-        return [event_id for event_id, _ in scored_events[:500]]
+        confirmed_scored_events = [event_id for event_id, _ in scored_events[:500]]
+        confirmed_scored_events_set = set(confirmed_scored_events)
+        # append unconfirmed, newly notarized events, sorted by descending amount
+        mempool_proofs = sorted(self.proof_verifier.get_mempool_proofs().items(), key=lambda x: x[1], reverse=True)
+        # sort out the event ids that are already in the confirmed set
+        unconfirmed_events = [event_id for event_id, _ in mempool_proofs if event_id not in confirmed_scored_events_set]
+        return confirmed_scored_events + unconfirmed_events
 
     async def handle_request(self, request: NostrEvent) -> Optional[NostrEvent]:
         event_ids = [['e', id] for id in self.get_sorted_notarized_event_ids()]
