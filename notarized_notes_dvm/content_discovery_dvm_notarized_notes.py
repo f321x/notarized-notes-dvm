@@ -144,9 +144,9 @@ class NotarizedNotesDVM(AIONostrDVM):
         content = {
             "name": self.dvm_name,
             "displayName": self.dvm_name,
-            "website": "https://github.com/spesmilo/notary/",
+            "website": "notary.electrum.org",
             "picture": "https://image.nostr.build/2f6eb8e1f7175dc9c14fdb6e3b101c2b33a10f8a25db828a686599e35eb4192b.png",
-            "about": "Spam-free global feed of notarized notes. github.com/spesmilo/notary.",
+            "about": "Spam-free global feed of notarized notes. notary.electrum.org.",
             "lud16": "x@lnaddress.com",
             "supportsEncryption": False,
             "acceptsNutZaps": False,
@@ -168,10 +168,10 @@ class NotarizedNotesDVM(AIONostrDVM):
     async def get_kind0_profile_event(self) -> NostrEvent:
         profile_info = {
             'name': self.dvm_name,
-            'about': 'Spam-free global feed of notarized notes. github.com/spesmilo/notary',
+            'about': 'Spam-free global feed of notarized notes. notary.electrum.org.',
             'picture': 'https://image.nostr.build/2f6eb8e1f7175dc9c14fdb6e3b101c2b33a10f8a25db828a686599e35eb4192b.png',
             'display_name': self.dvm_name,
-            'website': 'https://github.com/spesmilo/notary/',
+            'website': 'notary.electrum.org',
             'lud16': 'x@lnaddress.com',
         }
         profile_event = NostrEvent(
