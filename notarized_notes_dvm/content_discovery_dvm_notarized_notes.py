@@ -110,11 +110,11 @@ class NotarizedNotesDVM(AIONostrDVM):
         scored_events.sort(key=lambda x: x[1], reverse=True)
         confirmed_scored_events = [event_id for event_id, _ in scored_events[:500]]
         confirmed_scored_events_set = set(confirmed_scored_events)
-        # append unconfirmed, newly notarized events, sorted by descending amount
+        # get unconfirmed, newly notarized events, sorted by descending amount
         mempool_proofs = sorted(self.proof_verifier.get_mempool_proofs().items(), key=lambda x: x[1], reverse=True)
         # sort out the event ids that are already in the confirmed set
         unconfirmed_events = [event_id for event_id, _ in mempool_proofs if event_id not in confirmed_scored_events_set]
-        return confirmed_scored_events + unconfirmed_events
+        return unconfirmed_events[:50] + confirmed_scored_events
 
     async def handle_request(self, request: NostrEvent) -> Optional[NostrEvent]:
         event_ids = [['e', id] for id in self.get_sorted_notarized_event_ids()]
