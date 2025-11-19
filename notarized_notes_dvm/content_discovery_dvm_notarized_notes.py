@@ -3,14 +3,21 @@ import json
 from collections import defaultdict
 from pathlib import Path
 from typing import Sequence, Optional
+from itertools import batched
+import sys
 
 from electrum_aionostr.event import Event as NostrEvent
 from aionostr_dvm import AIONostrDVM, NIP89Info
-from cachetools import cached, TTLCache
+from cachetools import cached, TTLCache, LRUCache
 
 from .util import now
 from .proof_verifier import (Proof, UnverifiedNotarization, NotarizationProofVerifier,
                              BitcoinDaemonConfig)
+
+# need 3.12 for itertools batch
+if sys.version_info[1] < 12:
+    print(f"Needs at least python 3.12!", file=sys.stderr)
+    sys.exit(1)
 
 
 class NotarizedNotesDVM(AIONostrDVM):
@@ -38,6 +45,8 @@ class NotarizedNotesDVM(AIONostrDVM):
         self.taskgroup.create_task(self.query_notarization_events())
         self.taskgroup.create_task(self.keep_db_up_to_date())
         self.taskgroup.create_task(self.save_verified_proofs())
+        await asyncio.sleep(10)
+        self.taskgroup.create_task(self.query_event_kinds())
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
@@ -67,6 +76,40 @@ class NotarizedNotesDVM(AIONostrDVM):
                     continue
             await self.proof_verifier.verify(UnverifiedNotarization(proof, notarization_event))
 
+    async def query_event_kinds(self):
+        """Query the event kinds of the notarized event id's we got so we know which events are kind 1
+        events relevant for the users of the dvm."""
+        while True:
+            for batch in batched(self.verified_proofs.items(), 64):
+                # get event ids of which we don't know the kind yet.
+                event_ids_unknown_kind = set()
+                for notarized_event_id, summary in batch:
+                    if summary['event_kind'] is None:
+                        event_ids_unknown_kind.add(notarized_event_id)
+
+                if not event_ids_unknown_kind:
+                    continue
+                self.logger.info(f"fetching event kinds for {len(event_ids_unknown_kind)=}")
+                query = {
+                    'ids': list(event_ids_unknown_kind),
+                }
+                # only query event the relay has stored so the subscription ends once it sent everything it knows
+                async for event in self._relay_manager.get_events(query, single_event=False, only_stored=True):
+                    event_ids_unknown_kind.discard(event.id)
+                    try:
+                        self.verified_proofs[event.id]['event_kind'] = event.kind
+                    except Exception:
+                        self.logger.error(f"relay sent us event we didn't request? {event.id}")
+
+                # set kind unknown for event_ids for which we didn't get any result from the relay
+                # these might just be random hashes and not even real nostr events
+                for event_id in event_ids_unknown_kind:
+                    self.verified_proofs[event_id]['event_kind'] = "unknown"
+                await self.save_db()
+                # wait before requesting the next batch
+                await asyncio.sleep(10)
+            await asyncio.sleep(15)
+
     async def save_verified_proofs(self):
         async for verified_proof in self.proof_verifier.get_verified_proofs():
             is_valid, notarization_event_id, proof = verified_proof
@@ -88,6 +131,7 @@ class NotarizedNotesDVM(AIONostrDVM):
             event_summary = {
                 'proof_events': {},  # dict proof_event_id -> amount
                 'total_amount_sat': 0,
+                'event_kind': None,  # will be fetched by separate task
             }
         event_summary['proof_events'][notarization_event_id] = proof.proof_leaf_value_msat // 1000
         event_summary['total_amount_sat'] += proof.proof_leaf_value_msat // 1000
@@ -102,6 +146,8 @@ class NotarizedNotesDVM(AIONostrDVM):
 
         scored_events = []
         for event_id, summary in self.verified_proofs.items():
+            if summary['event_kind'] != 1:
+                continue  # we only return kind 1 events
             age_seconds = current_time - summary['last_updated']
             decay_factor = 2 ** (-age_seconds / decay_half_life)
             score = summary['total_amount_sat'] * decay_factor

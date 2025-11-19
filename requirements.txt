@@ -1,6 +1,7 @@
 python-dotenv~=1.2
 uvloop~=0.22
 cachetools~=6.2
+electrum-aionostr @ git+https://github.com/f321x/electrum-aionostr-fork@improve_subscription
 electrum @ git+https://github.com/spesmilo/electrum@4.6.2
 aionostr-dvm>=0.0.5
 bitcoinrpc~=0.7

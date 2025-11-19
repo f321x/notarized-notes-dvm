@@ -238,7 +238,7 @@ class NotarizationProofVerifier:
 
             # proof tx is valid and confirmed
             self._mempool_proofs.pop(notarization.notarization_event.id, None)
-            self.logger.debug(f"verified proof: {notarization.notarization_event.id=}")
+            self.logger.info(f"verified proof: {notarization.notarization_event.id=}")
             self.verified_proofs.put_nowait((True, notarization.notarization_event.id, notarization.proof))
 
     async def verify_proof(self, proof: Proof):
@@ -268,6 +268,8 @@ class NotarizationProofVerifier:
         # 4. verify that the amount burnt by the tx equals the sum of tree roots
         if txo_value != root_v:
             raise InvalidProof('value mismatch')
+        if proof.proof_leaf_value_msat <= 0:
+            raise InvalidProof('worthless proof')
         if confs < 1:
             raise UnconfirmedTx()
 
