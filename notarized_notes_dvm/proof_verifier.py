@@ -316,7 +316,7 @@ class NotarizationProofVerifier:
     def get_mempool_proofs(self) -> dict[str, int]:  # notarized event id, amount
         mempool_proofs = defaultdict(int)
         for unconfirmed_notarization in self._mempool_proofs.values():
-            amount = unconfirmed_notarization.proof.proof_leaf_value_msat // 1000
+            amount = unconfirmed_notarization.proof.proof_leaf_value_msat
             mempool_proofs[unconfirmed_notarization.proof.notarized_event_id] += amount
         return mempool_proofs
 

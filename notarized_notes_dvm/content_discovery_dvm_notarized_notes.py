@@ -129,12 +129,12 @@ class NotarizedNotesDVM(AIONostrDVM):
         else:
             # we need to store the proof event id to ensure it is not counted twice
             event_summary = {
-                'proof_events': {},  # dict proof_event_id -> amount
-                'total_amount_sat': 0,
+                'proof_events': {},  # dict proof_event_id -> amount msat
+                'total_amount_msat': 0,
                 'event_kind': None,  # will be fetched by separate task
             }
-        event_summary['proof_events'][notarization_event_id] = proof.proof_leaf_value_msat // 1000
-        event_summary['total_amount_sat'] += proof.proof_leaf_value_msat // 1000
+        event_summary['proof_events'][notarization_event_id] = proof.proof_leaf_value_msat
+        event_summary['total_amount_msat'] += proof.proof_leaf_value_msat
         event_summary['last_updated'] = now()
         self.logger.debug(f"saving verified proof, {event_summary=}")
         self.verified_proofs[proof.notarized_event_id] = event_summary
@@ -150,7 +150,7 @@ class NotarizedNotesDVM(AIONostrDVM):
                 continue  # we only return kind 1 events
             age_seconds = current_time - summary['last_updated']
             decay_factor = 2 ** (-age_seconds / decay_half_life)
-            score = summary['total_amount_sat'] * decay_factor
+            score = summary['total_amount_msat'] * decay_factor
             scored_events.append((event_id, score))
 
         scored_events.sort(key=lambda x: x[1], reverse=True)
